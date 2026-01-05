@@ -1,0 +1,71 @@
+app:
+  name: "YouTube Shorts Automation"
+  version: "2.0.0"
+  description: "Automated video generation and upload pipeline for YouTube Shorts using OpenAI and Gemini Veo"
+
+script_generation:
+  model: "gpt-4-turbo-preview"
+  max_tokens: 1000
+  temperature: 0.7
+  niche: "AI explained simply"
+  num_scenes: 5
+  target_duration_seconds: 50
+  max_word_count: 150
+  min_word_count: 120
+
+video_generation:
+  provider: "gemini"
+
+  # Gemini Veo 3.1 settings
+  gemini:
+    model: "veo-3-1-fast"
+    aspect_ratio: "9:16"
+    duration_per_clip: 8
+    max_parallel_clips: 5
+
+  # Common settings
+  max_retries: 3
+  timeout_seconds: 180
+  poll_interval_seconds: 5
+
+audio_generation:
+  language: "en"
+  tld: "com"
+  slow: false
+  format: "mp3"
+
+youtube_upload:
+  category_id: "28"  # Science & Technology
+  privacy_status: "public"  # Options: public, private, unlisted
+  default_tags:
+    - "AI"
+    - "Artificial Intelligence"
+    - "Tech"
+    - "Educational"
+    - "YouTube Shorts"
+    - "AI Explained"
+    - "Technology"
+  made_for_kids: false
+  default_language: "en"
+  default_description_suffix: |
+
+
+    Follow for more AI content!
+    #AI #ArtificialIntelligence #Tech #Shorts
+
+file_retention:
+  keep_days: 30
+  max_storage_gb: 50
+  auto_cleanup: true
+
+retry:
+  max_attempts: 3
+  base_delay_seconds: 2
+  max_delay_seconds: 60
+  exponential_base: 2
+
+logging:
+  format: "json"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  file_rotation: "10 MB"
+  backup_count: 5

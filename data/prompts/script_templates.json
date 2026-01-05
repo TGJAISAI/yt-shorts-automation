@@ -1,0 +1,85 @@
+{
+  "templates": [
+    {
+      "id": "ai_explained_simple",
+      "name": "AI Explained Simply",
+      "niche": "AI explained simply",
+      "description": "Simple, beginner-friendly explanations of AI concepts",
+      "topics": [
+        "What is Machine Learning?",
+        "How Neural Networks Work",
+        "What is Deep Learning?",
+        "Supervised vs Unsupervised Learning",
+        "What is Natural Language Processing?",
+        "How AI Generates Images",
+        "What are Transformers in AI?",
+        "How ChatGPT Works",
+        "What is Computer Vision?",
+        "AI vs Machine Learning vs Deep Learning",
+        "What is Reinforcement Learning?",
+        "How Recommendation Algorithms Work",
+        "What is a Large Language Model?",
+        "How AI Detects Faces",
+        "What is Transfer Learning?"
+      ],
+      "structure": {
+        "intro": "Hook the viewer with an interesting question or fact",
+        "explanation": "Break down the concept into simple terms",
+        "example": "Provide a real-world example",
+        "visual": "Describe what should be visualized",
+        "conclusion": "Summarize key takeaway"
+      },
+      "style_notes": [
+        "Use simple language",
+        "Avoid jargon or explain it",
+        "Use analogies and metaphors",
+        "Keep it engaging and fast-paced",
+        "Target 45-50 seconds total"
+      ]
+    },
+    {
+      "id": "tech_news",
+      "name": "Tech News Shorts",
+      "niche": "Technology news",
+      "description": "Quick updates on latest tech developments",
+      "topics": [
+        "Latest AI Breakthroughs",
+        "New iPhone Features",
+        "Tesla Updates",
+        "Crypto News",
+        "Space Tech"
+      ]
+    },
+    {
+      "id": "how_it_works",
+      "name": "How It Works",
+      "niche": "Technology explanations",
+      "description": "Explaining how everyday technology works",
+      "topics": [
+        "How WiFi Works",
+        "How Bluetooth Connects",
+        "How Touch Screens Work",
+        "How Batteries Store Energy",
+        "How GPS Finds Your Location"
+      ]
+    }
+  ],
+  "image_style_presets": {
+    "modern_tech": "digital art, modern, futuristic, vibrant colors, clean, professional, tech aesthetic, high quality",
+    "minimalist": "minimal, simple, clean, modern, professional, flat design, vector art",
+    "abstract": "abstract art, geometric, colorful, modern, artistic, creative, digital illustration",
+    "educational": "educational illustration, diagram, infographic style, clear, informative, professional"
+  },
+  "scene_transitions": [
+    "fade",
+    "crossfade",
+    "wipe",
+    "zoom"
+  ],
+  "call_to_action": [
+    "Follow for more AI content!",
+    "Like if you learned something new!",
+    "Comment your thoughts below!",
+    "Share with someone learning AI!"
+  ]
+}
