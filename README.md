@@ -383,3 +383,5 @@ For issues and questions:
 - Stability AI for Stable Diffusion
 - Google for YouTube Data API and gTTS
 - FastAPI, MoviePy, and all open-source contributors
+
+# yt-shorts-automation
