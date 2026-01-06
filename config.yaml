@@ -14,24 +14,27 @@ script_generation:
   min_word_count: 120
 
 video_generation:
-  provider: "gemini"
+  provider: "pexels"
 
-  # Gemini Veo 3.1 settings
-  gemini:
-    model: "veo-3-1-fast"
-    aspect_ratio: "9:16"
-    duration_per_clip: 8
-    max_parallel_clips: 5
-
-  # Common settings
+  # Pexels stock video settings
+  max_parallel_clips: 5
   max_retries: 3
-  timeout_seconds: 180
-  poll_interval_seconds: 5
+  timeout_seconds: 60  # For downloading videos
 
 audio_generation:
-  language: "en"
-  tld: "com"
-  slow: false
+  # Provider options: "elevenlabs" or "openai_tts"
+  provider: "elevenlabs"  # ElevenLabs TTS (most natural, human-like voice)
+
+  # ElevenLabs settings:
+  voice: "6F5Zhi321D3Oq7v1oNT4"  # Your ElevenLabs voice ID
+  model: "eleven_multilingual_v2"  # High quality multilingual model
+
+  # OpenAI TTS alternative (if needed):
+  # provider: "openai_tts"
+  # voice: "onyx"  # Options: alloy, echo, fable, onyx, nova, shimmer
+  # model: "tts-1-hd"
+
+  speed: 1.0  # Speaking speed
   format: "mp3"
 
 youtube_upload:

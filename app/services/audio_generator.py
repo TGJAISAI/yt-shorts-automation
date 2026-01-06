@@ -1,11 +1,12 @@
-"""Audio generation service using gTTS."""
+"""Audio generation service using ElevenLabs or OpenAI TTS."""
 
 import logging
 import subprocess
 import json
 from pathlib import Path
 from typing import List, Tuple
-from gtts import gTTS
+from openai import OpenAI
+from elevenlabs import ElevenLabs
 
 from app.core.config import Config
 from app.core.exceptions import AudioGenerationError, DurationExceededError
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class AudioGenerator:
-    """Generates audio narration using Google Text-to-Speech."""
+    """Generates audio narration using ElevenLabs or OpenAI Text-to-Speech."""
 
     def __init__(self, config: Config):
         """Initialize audio generator.
@@ -26,6 +27,18 @@ class AudioGenerator:
         self.config = config
         self.audio_config = config.audio_generation
         self.max_duration = config.settings.max_video_duration
+
+        # Initialize TTS clients based on provider
+        self.provider = self.audio_config.provider.lower()
+
+        if self.provider == "elevenlabs":
+            self.elevenlabs_client = ElevenLabs(api_key=config.settings.elevenlabs_api_key)
+            logger.info("Initialized ElevenLabs TTS")
+        elif self.provider == "openai_tts":
+            self.openai_client = OpenAI(api_key=config.settings.openai_api_key)
+            logger.info("Initialized OpenAI TTS")
+        else:
+            raise AudioGenerationError(f"Unknown TTS provider: {self.provider}")
 
     def _get_audio_duration(self, audio_path: str) -> float:
         """Get audio duration using ffprobe.
@@ -70,14 +83,16 @@ class AudioGenerator:
         self,
         text: str,
         output_path: str,
-        validate_duration: bool = True
+        validate_duration: bool = True,
+        voice: str = None
     ) -> Tuple[str, float]:
-        """Generate audio from text.
+        """Generate audio from text using configured TTS provider.
 
         Args:
             text: Text to convert to speech.
             output_path: Path to save audio file.
             validate_duration: Whether to validate duration against max.
+            voice: Voice to use (provider-specific, uses config if None).
 
         Returns:
             Tuple of (output_path, duration_in_seconds).
@@ -87,26 +102,27 @@ class AudioGenerator:
             DurationExceededError: If audio duration exceeds maximum.
         """
         try:
-            logger.info("Generating audio from text")
-
             if not text or not text.strip():
                 raise AudioGenerationError("Text cannot be empty")
 
-            # Generate audio using gTTS
-            tts = gTTS(
-                text=text,
-                lang=self.audio_config.language,
-                tld=self.audio_config.tld,
-                slow=self.audio_config.slow
-            )
+            # Use configured voice if not specified
+            if voice is None:
+                voice = self.audio_config.voice
 
             # Save to file
             output_file = Path(output_path)
             output_file.parent.mkdir(parents=True, exist_ok=True)
-
-            # gTTS saves as MP3
             final_path = str(output_file.with_suffix('.mp3'))
-            tts.save(final_path)
+
+            # Generate audio based on provider
+            if self.provider == "elevenlabs":
+                logger.info(f"Generating audio with ElevenLabs (voice: {voice})")
+                self._generate_elevenlabs(text, final_path, voice)
+            elif self.provider == "openai_tts":
+                logger.info(f"Generating audio with OpenAI TTS (voice: {voice})")
+                self._generate_openai(text, final_path, voice)
+            else:
+                raise AudioGenerationError(f"Unknown TTS provider: {self.provider}")
 
             # Get audio duration using ffprobe
             duration = self._get_audio_duration(final_path)
@@ -127,6 +143,54 @@ class AudioGenerator:
             raise
         except Exception as e:
             raise AudioGenerationError(f"Failed to generate audio: {str(e)}")
+
+    def _generate_elevenlabs(self, text: str, output_path: str, voice_id: str):
+        """Generate audio using ElevenLabs.
+
+        Args:
+            text: Text to convert to speech.
+            output_path: Path to save audio file.
+            voice_id: ElevenLabs voice ID.
+        """
+        try:
+            # Generate audio using ElevenLabs
+            audio_generator = self.elevenlabs_client.text_to_speech.convert(
+                voice_id=voice_id,
+                text=text,
+                model_id="eleven_multilingual_v2",  # High quality model
+                output_format="mp3_44100_128"  # MP3 format, 44.1kHz, 128kbps
+            )
+
+            # Save audio to file
+            with open(output_path, 'wb') as f:
+                for chunk in audio_generator:
+                    f.write(chunk)
+
+        except Exception as e:
+            raise AudioGenerationError(f"ElevenLabs generation failed: {str(e)}")
+
+    def _generate_openai(self, text: str, output_path: str, voice: str):
+        """Generate audio using OpenAI TTS.
+
+        Args:
+            text: Text to convert to speech.
+            output_path: Path to save audio file.
+            voice: OpenAI voice name (alloy, echo, fable, onyx, nova, shimmer).
+        """
+        try:
+            # Generate audio using OpenAI TTS
+            response = self.openai_client.audio.speech.create(
+                model="tts-1-hd",  # High quality model
+                voice=voice,
+                input=text,
+                speed=1.0  # Normal speed
+            )
+
+            # Save the audio file
+            response.stream_to_file(output_path)
+
+        except Exception as e:
+            raise AudioGenerationError(f"OpenAI TTS generation failed: {str(e)}")
 
     def generate_from_scenes(
         self,
@@ -163,12 +227,13 @@ class AudioGenerator:
             # Join with appropriate pauses
             full_text = " ".join(voiceover_texts)
 
-            # Generate audio
+            # Generate audio with configured voice
             output_path = Path(output_dir) / filename
             return self.generate_audio(
                 text=full_text,
                 output_path=str(output_path),
-                validate_duration=True
+                validate_duration=True,
+                voice=self.audio_config.voice
             )
 
         except Exception as e:

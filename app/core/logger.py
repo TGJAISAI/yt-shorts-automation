@@ -96,12 +96,16 @@ def setup_logging(
     Returns:
         Configured logger instance.
     """
-    # Create logger
-    logger = logging.getLogger("yt_shorts_automation")
-    logger.setLevel(getattr(logging, log_level.upper()))
+    # Configure root logger to catch all app loggers
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper()))
 
     # Remove existing handlers
-    logger.handlers.clear()
+    root_logger.handlers.clear()
+
+    # Also create named logger for direct access
+    logger = logging.getLogger("yt_shorts_automation")
+    logger.setLevel(getattr(logging, log_level.upper()))
 
     # Create logs directory if it doesn't exist
     log_path = Path(log_file)
@@ -128,7 +132,7 @@ def setup_logging(
         file_handler.setFormatter(file_formatter)
 
     file_handler.setLevel(getattr(logging, log_level.upper()))
-    logger.addHandler(file_handler)
+    root_logger.addHandler(file_handler)
 
     # Console handler with colored formatter
     console_handler = logging.StreamHandler(sys.stdout)
@@ -138,7 +142,10 @@ def setup_logging(
     )
     console_handler.setFormatter(console_formatter)
     console_handler.setLevel(getattr(logging, log_level.upper()))
-    logger.addHandler(console_handler)
+    root_logger.addHandler(console_handler)
+
+    # Prevent propagation to avoid duplicate logs
+    logger.propagate = False
 
     return logger
 

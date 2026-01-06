@@ -25,28 +25,20 @@ class ScriptGenerationConfig(BaseModel):
     min_word_count: int
 
 
-class GeminiConfig(BaseModel):
-    """Configuration for Gemini Veo."""
-    model: str
-    aspect_ratio: str
-    duration_per_clip: int
-    max_parallel_clips: int
-
-
 class VideoGenerationConfig(BaseModel):
     """Configuration for video generation."""
     provider: str
-    gemini: GeminiConfig
+    max_parallel_clips: int
     max_retries: int
     timeout_seconds: int
-    poll_interval_seconds: int
 
 
 class AudioGenerationConfig(BaseModel):
     """Configuration for audio generation."""
-    language: str
-    tld: str
-    slow: bool
+    provider: str
+    voice: str
+    model: str
+    speed: float
     format: str
 
 
@@ -98,6 +90,12 @@ class Settings(BaseSettings):
 
     # Gemini API
     gemini_api_key: str = Field(..., env="GEMINI_API_KEY")
+
+    # Pexels API
+    pexels_api_key: str = Field(..., env="PEXELS_API_KEY")
+
+    # ElevenLabs API
+    elevenlabs_api_key: str = Field(..., env="ELEVENLABS_API_KEY")
 
     # YouTube API
     youtube_client_id: str = Field(..., env="YOUTUBE_CLIENT_ID")

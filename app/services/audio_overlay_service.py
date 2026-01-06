@@ -127,7 +127,16 @@ class AudioOverlayService:
                     abs_path = str(Path(clip_path).resolve())
                     f.write(f"file '{abs_path}'\n")
 
-            # Step 2: Concatenate videos and add audio
+            # Get audio duration to trim video
+            audio_duration = self._get_video_duration(audio_path)
+            logger.info(f"Audio duration: {audio_duration:.1f}s")
+
+            # Ensure we don't exceed max duration (59s for YouTube Shorts)
+            target_duration = min(audio_duration, self.max_duration - 1)  # Leave 1s buffer
+            logger.info(f"Target video duration: {target_duration:.1f}s")
+
+            # Step 2: Concatenate videos and add audio with duration limit
+            # Use high quality settings and proper sync flags
             cmd = [
                 'ffmpeg',
                 '-y',
@@ -135,14 +144,20 @@ class AudioOverlayService:
                 '-safe', '0',
                 '-i', str(concat_file),
                 '-i', audio_path,
+                '-t', str(target_duration),  # Trim to target duration
                 '-c:v', 'libx264',  # Re-encode video for compatibility
-                '-preset', 'fast',
-                '-crf', '23',  # Quality (lower = better, 18-28 range)
+                '-preset', 'medium',  # Better quality than 'fast'
+                '-crf', '18',  # Higher quality (18 = visually lossless)
+                '-pix_fmt', 'yuv420p',  # Ensure compatible pixel format
+                '-r', '30',  # Force 30 fps for consistency
+                '-vsync', 'cfr',  # Constant frame rate to prevent freezing
                 '-c:a', 'aac',
-                '-b:a', '128k',
+                '-b:a', '192k',  # Higher audio bitrate for better quality
+                '-ar', '44100',  # Standard audio sample rate
                 '-map', '0:v:0',  # Video from concat
                 '-map', '1:a:0',  # Audio from audio file
-                '-shortest',  # Trim to shortest stream (audio)
+                '-shortest',  # Trim to shortest stream
+                '-movflags', '+faststart',  # Optimize for streaming
                 str(output_file)
             ]
 

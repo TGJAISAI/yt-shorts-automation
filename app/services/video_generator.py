@@ -1,7 +1,9 @@
-"""Video generation service using Google Gemini Veo 3.1."""
+"""Video generation service using Pexels stock videos."""
 
 import logging
 import time
+import subprocess
+import json
 import requests
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class VideoGenerator:
-    """Generates videos using Google Gemini Veo 3.1."""
+    """Generates videos using Pexels stock footage."""
 
     def __init__(self, config: Config):
         """Initialize video generator.
@@ -25,19 +27,20 @@ class VideoGenerator:
         """
         self.config = config
         self.video_config = config.video_generation
-        self.gemini_config = config.video_generation.gemini
-        self.api_key = config.settings.gemini_api_key
+        self.pexels_api_key = config.settings.pexels_api_key
 
-        # Gemini API endpoints
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+        # Pexels API endpoint for videos
+        self.pexels_base_url = "https://api.pexels.com/videos"
         self.headers = {
-            "Content-Type": "application/json"
+            "Authorization": self.pexels_api_key
         }
+
+        logger.info("Video generator initialized with Pexels API")
 
     @retry_with_backoff(
         max_attempts=3,
         base_delay=5.0,
-        exceptions=(VideoAPIError, RateLimitError)
+        exceptions=(VideoAPIError, RateLimitError, VideoGenerationError)
     )
     def generate_video_clip(
         self,
@@ -45,10 +48,10 @@ class VideoGenerator:
         output_path: str,
         scene_id: int = 1
     ) -> Tuple[str, float]:
-        """Generate a single video clip from a prompt.
+        """Generate a single video clip from Pexels stock footage.
 
         Args:
-            prompt: Text prompt for video generation.
+            prompt: Text description of the scene (used to search Pexels).
             output_path: Path to save the video clip.
             scene_id: Scene identifier for logging.
 
@@ -59,18 +62,18 @@ class VideoGenerator:
             VideoGenerationError: If video generation fails.
         """
         try:
-            logger.info(f"[Scene {scene_id}] Generating video clip: {prompt[:100]}...")
+            logger.info(f"[Scene {scene_id}] Searching Pexels for: {prompt[:100]}...")
 
-            # Step 1: Create generation request
-            generation_name = self._create_generation(prompt, scene_id)
+            # Search Pexels for relevant video
+            video_url = self._search_pexels_video(prompt, scene_id)
 
-            # Step 2: Poll for completion
-            video_data = self._poll_generation_status(generation_name, scene_id)
+            # Download the video
+            output_file = self._download_pexels_video(video_url, output_path, scene_id)
 
-            # Step 3: Download video
-            output_file = self._download_video(video_data, output_path, scene_id)
+            # Resize/crop to 9:16 format if needed
+            output_file = self._format_for_shorts(output_file, scene_id)
 
-            # Step 4: Get video duration
+            # Get video duration
             duration = self._get_video_duration(output_file)
 
             logger.info(f"[Scene {scene_id}] Video generated successfully: {duration:.1f}s")
@@ -81,131 +84,104 @@ class VideoGenerator:
                 raise
             raise VideoGenerationError(f"Failed to generate video clip: {str(e)}")
 
-    def _create_generation(self, prompt: str, scene_id: int) -> str:
-        """Create a video generation request.
+    def _search_pexels_video(self, prompt: str, scene_id: int) -> str:
+        """Search Pexels for a relevant video.
 
         Args:
-            prompt: Text prompt.
-            scene_id: Scene identifier.
+            prompt: Search query (scene description).
+            scene_id: Scene identifier for logging.
 
         Returns:
-            Generation resource name.
+            Video download URL (HD portrait format preferred).
 
         Raises:
-            VideoAPIError: If API request fails.
+            VideoAPIError: If search fails or no results found.
         """
         try:
-            payload = {
-                "prompt": prompt,
-                "videoGenerationConfig": {
-                    "aspectRatio": self.gemini_config.aspect_ratio,
-                    "duration": f"{self.gemini_config.duration_per_clip}s",
-                    "model": self.gemini_config.model
-                }
+            # Extract keywords from prompt (simple approach)
+            keywords = self._extract_keywords(prompt)
+            search_query = " ".join(keywords[:3])  # Use top 3 keywords
+
+            logger.info(f"[Scene {scene_id}] Searching Pexels with query: '{search_query}'")
+
+            # Search Pexels videos via REST API
+            search_url = f"{self.pexels_base_url}/search"
+            params = {
+                'query': search_query,
+                'orientation': 'portrait',
+                'size': 'medium',
+                'per_page': 5
             }
 
-            url = f"{self.base_url}/models/{self.gemini_config.model}:generateVideo?key={self.api_key}"
-
-            response = requests.post(
-                url,
-                headers=self.headers,
-                json=payload,
-                timeout=30
-            )
+            response = requests.get(search_url, headers=self.headers, params=params, timeout=30)
 
             if response.status_code == 429:
-                raise RateLimitError("Gemini API rate limit exceeded")
-            elif response.status_code == 401 or response.status_code == 403:
-                raise VideoAPIError("Gemini API authentication failed. Check your API key.")
+                raise RateLimitError("Pexels API rate limit exceeded")
             elif response.status_code != 200:
-                raise VideoAPIError(f"Gemini API error: {response.status_code} - {response.text}")
+                raise VideoAPIError(f"Pexels API error: {response.status_code} - {response.text}")
 
             data = response.json()
-            generation_name = data.get("name")
 
-            if not generation_name:
-                raise VideoAPIError("No generation name returned from Gemini API")
+            # Check if we got results
+            if not data.get('videos') or len(data['videos']) == 0:
+                logger.warning(f"[Scene {scene_id}] No results for '{search_query}', using fallback search")
+                # Fallback to generic search
+                params['query'] = 'nature'
+                response = requests.get(search_url, headers=self.headers, params=params, timeout=30)
+                data = response.json()
 
-            logger.info(f"[Scene {scene_id}] Generation started: {generation_name}")
-            return generation_name
+            if not data.get('videos') or len(data['videos']) == 0:
+                raise VideoAPIError(f"No videos found on Pexels for: {search_query}")
 
-        except requests.exceptions.Timeout:
-            raise VideoAPIError("Gemini API request timed out")
-        except requests.exceptions.RequestException as e:
-            raise VideoAPIError(f"Gemini API request failed: {str(e)}")
+            # Get the first video
+            video = data['videos'][0]
 
-    def _poll_generation_status(self, generation_name: str, scene_id: int) -> Dict[str, Any]:
-        """Poll for generation completion.
+            # Find best quality portrait video file
+            video_url = None
+            for video_file in video['video_files']:
+                if video_file.get('width', 0) == 1080 and video_file.get('height', 0) == 1920:
+                    # Perfect 9:16 format
+                    video_url = video_file['link']
+                    break
+                elif video_file.get('quality') and 'hd' in str(video_file.get('quality')).lower():
+                    # HD quality as fallback
+                    video_url = video_file['link']
+
+            if not video_url and video['video_files']:
+                # Use any available file as last resort
+                video_url = video['video_files'][0]['link']
+
+            if not video_url:
+                raise VideoAPIError("No downloadable video file found")
+
+            logger.info(f"[Scene {scene_id}] Found video: {video.get('url', 'N/A')}")
+            return video_url
+
+        except Exception as e:
+            if isinstance(e, VideoAPIError):
+                raise
+            raise VideoAPIError(f"Pexels search failed: {str(e)}")
+
+    def _extract_keywords(self, text: str) -> List[str]:
+        """Extract keywords from text for search.
 
         Args:
-            generation_name: Generation resource name.
-            scene_id: Scene identifier.
+            text: Input text.
 
         Returns:
-            Video data from completed generation.
-
-        Raises:
-            VideoAPIError: If polling fails or times out.
+            List of keywords.
         """
-        start_time = time.time()
-        poll_interval = self.video_config.poll_interval_seconds
-        max_wait = self.video_config.timeout_seconds
+        # Remove common words
+        stop_words = {'a', 'an', 'and', 'the', 'is', 'are', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'as'}
+        words = text.lower().split()
+        keywords = [w.strip('.,!?') for w in words if w.lower() not in stop_words and len(w) > 2]
+        return keywords[:5]
 
-        while True:
-            elapsed = time.time() - start_time
-
-            if elapsed > max_wait:
-                raise VideoAPIError(
-                    f"Video generation timed out after {max_wait}s. "
-                    f"Generation: {generation_name}"
-                )
-
-            try:
-                url = f"{self.base_url}/{generation_name}?key={self.api_key}"
-
-                response = requests.get(
-                    url,
-                    headers=self.headers,
-                    timeout=30
-                )
-
-                if response.status_code != 200:
-                    raise VideoAPIError(f"Failed to check status: {response.status_code}")
-
-                data = response.json()
-                state = data.get("state", "UNKNOWN")
-
-                logger.debug(f"[Scene {scene_id}] Status: {state} ({elapsed:.0f}s)")
-
-                if state == "SUCCEEDED":
-                    video_data = data.get("videoData")
-                    if not video_data:
-                        raise VideoAPIError("No video data in completed generation")
-
-                    logger.info(f"[Scene {scene_id}] Generation completed in {elapsed:.1f}s")
-                    return video_data
-
-                elif state == "FAILED":
-                    error = data.get("error", {}).get("message", "Unknown error")
-                    raise VideoAPIError(f"Video generation failed: {error}")
-
-                elif state in ["PENDING", "PROCESSING"]:
-                    time.sleep(poll_interval)
-                    continue
-
-                else:
-                    logger.warning(f"[Scene {scene_id}] Unknown status: {state}")
-                    time.sleep(poll_interval)
-
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Polling error: {e}. Retrying in {poll_interval}s...")
-                time.sleep(poll_interval)
-
-    def _download_video(self, video_data: Dict[str, Any], output_path: str, scene_id: int) -> str:
-        """Download video from base64 data or URL.
+    def _download_pexels_video(self, video_url: str, output_path: str, scene_id: int) -> str:
+        """Download video from Pexels.
 
         Args:
-            video_data: Video data from API.
+            video_url: Direct download URL.
             output_path: Path to save video.
             scene_id: Scene identifier.
 
@@ -216,40 +192,102 @@ class VideoGenerator:
             VideoAPIError: If download fails.
         """
         try:
-            import base64
+            logger.info(f"[Scene {scene_id}] Downloading video from Pexels...")
 
-            logger.info(f"[Scene {scene_id}] Downloading video...")
+            # Create output directory
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-            output_file = Path(output_path)
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Download video
+            response = requests.get(video_url, stream=True, timeout=60)
 
-            # Gemini returns video as base64 encoded data
-            if "videoBase64" in video_data:
-                video_bytes = base64.b64decode(video_data["videoBase64"])
-                with open(output_file, 'wb') as f:
-                    f.write(video_bytes)
+            if response.status_code != 200:
+                raise VideoAPIError(f"Failed to download video: HTTP {response.status_code}")
 
-            elif "uri" in video_data:
-                # If URI is provided instead
-                response = requests.get(video_data["uri"], timeout=120)
-                if response.status_code != 200:
-                    raise VideoAPIError(f"Failed to download video: {response.status_code}")
+            # Save to file
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
 
-                with open(output_file, 'wb') as f:
-                    f.write(response.content)
+            file_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
+            logger.info(f"[Scene {scene_id}] Downloaded video: {file_size_mb:.2f} MB")
 
-            else:
-                raise VideoAPIError("No video data or URI in response")
+            return output_path
 
-            file_size_mb = output_file.stat().st_size / (1024 * 1024)
-            logger.info(f"[Scene {scene_id}] Video downloaded: {file_size_mb:.2f} MB")
+        except requests.exceptions.RequestException as e:
+            raise VideoAPIError(f"Failed to download video: {str(e)}")
 
-            return str(output_file)
+    def _format_for_shorts(self, video_path: str, scene_id: int) -> str:
+        """Format video to 9:16 aspect ratio for YouTube Shorts.
+
+        Args:
+            video_path: Path to input video.
+            scene_id: Scene identifier.
+
+        Returns:
+            Path to formatted video.
+
+        Raises:
+            VideoGenerationError: If formatting fails.
+        """
+        try:
+            # Get video dimensions
+            probe_cmd = [
+                'ffprobe',
+                '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_streams',
+                video_path
+            ]
+
+            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=10)
+            data = json.loads(result.stdout)
+            video_stream = next(s for s in data['streams'] if s['codec_type'] == 'video')
+
+            width = int(video_stream['width'])
+            height = int(video_stream['height'])
+
+            # Check if already 9:16
+            target_width = 1080
+            target_height = 1920
+            current_ratio = width / height
+            target_ratio = target_width / target_height
+
+            if abs(current_ratio - target_ratio) < 0.01:
+                logger.info(f"[Scene {scene_id}] Video already in 9:16 format")
+                return video_path
+
+            # Need to crop/scale to 9:16
+            logger.info(f"[Scene {scene_id}] Converting to 9:16 format ({width}x{height} → {target_width}x{target_height})")
+
+            temp_output = str(Path(video_path).with_suffix('.formatted.mp4'))
+
+            # FFmpeg command to crop and scale
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-vf', f'scale={target_width}:{target_height}:force_original_aspect_ratio=increase,crop={target_width}:{target_height}',
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-an',  # Remove audio (will be added later)
+                temp_output
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                raise VideoGenerationError(f"FFmpeg formatting failed: {result.stderr}")
+
+            # Replace original with formatted version
+            Path(video_path).unlink()
+            Path(temp_output).rename(video_path)
+
+            logger.info(f"[Scene {scene_id}] Video formatted successfully")
+            return video_path
 
         except Exception as e:
-            if isinstance(e, VideoAPIError):
-                raise
-            raise VideoAPIError(f"Failed to download video: {str(e)}")
+            raise VideoGenerationError(f"Failed to format video: {str(e)}")
+
 
     def _get_video_duration(self, video_path: str) -> float:
         """Get video duration using ffprobe or estimate.
@@ -286,8 +324,8 @@ class VideoGenerator:
         except Exception as e:
             logger.warning(f"Could not get video duration via ffprobe: {e}")
 
-        # Fallback: estimate based on config
-        estimated_duration = float(self.gemini_config.duration_per_clip)
+        # Fallback: estimate based on typical Pexels video length
+        estimated_duration = 8.0  # Most Pexels videos are 5-15 seconds
         logger.info(f"Using estimated duration: {estimated_duration}s")
         return estimated_duration
 
@@ -315,7 +353,7 @@ class VideoGenerator:
             output_dir_path.mkdir(parents=True, exist_ok=True)
 
             clips = []
-            max_workers = min(self.gemini_config.max_parallel_clips, len(prompts))
+            max_workers = min(self.video_config.max_parallel_clips, len(prompts))
 
             # Generate clips in parallel
             with ThreadPoolExecutor(max_workers=max_workers) as executor:

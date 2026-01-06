@@ -103,13 +103,13 @@ class PipelineValidator:
         """
         issues = []
 
-        required_fields = ["scene_id", "image_prompt", "voiceover", "duration"]
+        required_fields = ["scene_id", "description", "voiceover", "duration"]
         for field in required_fields:
             if field not in scene:
                 issues.append(f"Scene {scene_number}: missing field '{field}'")
 
-        if "image_prompt" in scene and not scene["image_prompt"].strip():
-            issues.append(f"Scene {scene_number}: image_prompt is empty")
+        if "description" in scene and not scene["description"].strip():
+            issues.append(f"Scene {scene_number}: description is empty")
 
         if "voiceover" in scene and not scene["voiceover"].strip():
             issues.append(f"Scene {scene_number}: voiceover is empty")
@@ -200,19 +200,37 @@ class PipelineValidator:
             issues.append("Audio file is empty")
             return False, issues
 
-        # Check duration and format
+        # Check duration using ffprobe
         try:
-            from pydub import AudioSegment
-            audio = AudioSegment.from_file(audio_path)
-            duration = len(audio) / 1000.0  # Convert ms to seconds
+            import subprocess
+            import json
 
-            if duration >= max_duration:
-                issues.append(
-                    f"Audio duration {duration:.1f}s exceeds maximum {max_duration}s"
-                )
+            result = subprocess.run(
+                [
+                    'ffprobe',
+                    '-v', 'quiet',
+                    '-print_format', 'json',
+                    '-show_format',
+                    audio_path
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
 
-            if duration == 0:
-                issues.append("Audio has zero duration")
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                duration = float(data['format']['duration'])
+
+                if duration >= max_duration:
+                    issues.append(
+                        f"Audio duration {duration:.1f}s exceeds maximum {max_duration}s"
+                    )
+
+                if duration == 0:
+                    issues.append("Audio has zero duration")
+            else:
+                issues.append(f"Failed to probe audio: {result.stderr}")
 
         except Exception as e:
             issues.append(f"Failed to validate audio: {str(e)}")
@@ -247,40 +265,71 @@ class PipelineValidator:
             issues.append("Video file is empty")
             return False, issues
 
-        # Check video properties
+        # Check video properties using ffprobe
         try:
-            from moviepy.editor import VideoFileClip
+            import subprocess
+            import json
 
-            video = VideoFileClip(video_path)
-            width, height = video.size
-            duration = video.duration
-            has_audio = video.audio is not None
+            result = subprocess.run(
+                [
+                    'ffprobe',
+                    '-v', 'quiet',
+                    '-print_format', 'json',
+                    '-show_format',
+                    '-show_streams',
+                    video_path
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
 
-            video.close()
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
 
-            # Validate dimensions
-            expected_width = self.config.settings.video_width
-            expected_height = self.config.settings.video_height
+                # Get video stream
+                video_stream = None
+                audio_stream = None
+                for stream in data.get('streams', []):
+                    if stream['codec_type'] == 'video':
+                        video_stream = stream
+                    elif stream['codec_type'] == 'audio':
+                        audio_stream = stream
 
-            if width != expected_width:
-                issues.append(f"Video width {width} != expected {expected_width}")
+                if not video_stream:
+                    issues.append("No video stream found")
+                else:
+                    width = int(video_stream.get('width', 0))
+                    height = int(video_stream.get('height', 0))
 
-            if height != expected_height:
-                issues.append(f"Video height {height} != expected {expected_height}")
+                    # Validate dimensions
+                    expected_width = self.config.settings.video_width
+                    expected_height = self.config.settings.video_height
 
-            # Validate duration
-            if duration >= self.config.settings.max_video_duration:
-                issues.append(
-                    f"Video duration {duration:.1f}s >= maximum "
-                    f"{self.config.settings.max_video_duration}s"
-                )
+                    if width != expected_width:
+                        issues.append(f"Video width {width} != expected {expected_width}")
 
-            if duration == 0:
-                issues.append("Video has zero duration")
+                    if height != expected_height:
+                        issues.append(f"Video height {height} != expected {expected_height}")
 
-            # Validate audio
-            if not has_audio:
-                issues.append("Video has no audio track")
+                # Get duration
+                duration = float(data['format'].get('duration', 0))
+
+                # Validate duration
+                if duration >= self.config.settings.max_video_duration:
+                    issues.append(
+                        f"Video duration {duration:.1f}s >= maximum "
+                        f"{self.config.settings.max_video_duration}s"
+                    )
+
+                if duration == 0:
+                    issues.append("Video has zero duration")
+
+                # Validate audio
+                if not audio_stream:
+                    issues.append("Video has no audio track")
+            else:
+                issues.append(f"Failed to probe video: {result.stderr}")
 
         except Exception as e:
             issues.append(f"Failed to validate video: {str(e)}")
